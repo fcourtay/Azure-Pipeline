@@ -1,0 +1,100 @@
+
+trigger:
+- master
+
+variables:
+  terraformstoragerg: 'fcyterraformrg'
+  terraformstorageaccount: 'fcyterraformstorage'
+  location: 'eastus2'
+  resource_group: 'fcy-scalar-terraform'
+
+stages:
+- stage: BuildCode
+  jobs:
+  - job: BuildCode
+    pool:
+      name: Azure Pipelines
+      vmImage: 'vs2017-win2016'
+    steps:
+    - task: CopyFiles@2
+      displayName: 'Copy Files to: $(build.artifactstagingdirectory)/Terraform'
+      inputs:
+        SourceFolder: 'Terraform'
+        Contents: '**'
+        TargetFolder: '$(build.artifactstagingdirectory)/Terraform'
+    - task: PublishPipelineArtifact@1
+      inputs:
+        targetPath: '$(build.artifactstagingdirectory)'
+        artifact: 'drop'
+        publishLocation: 'pipeline'
+
+- stage: RunTerraform
+  jobs:
+  - job: RunTerraform
+    pool:
+        name: Azure Pipelines
+        vmImage: 'vs2017-win2016'
+    steps:
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        buildType: 'current'
+        targetPath: '$(Pipeline.Workspace)'
+
+    - task: AzureCLI@1
+      displayName: 'Azure CLI '
+      inputs:
+        azureSubscription: 'Visual Studio Enterprise – MPN - FCY (d6aa2fba-9eff-4f57-878b-0ab1d7768832)'
+        scriptLocation: inlineScript
+        inlineScript: |
+          call az group create --location eastus2 --name $(terraformstoragerg)
+          call az storage account create --name $(terraformstorageaccount) --resource-group $(terraformstoragerg) --location eastus2 --sku Standard_LRS
+          call az storage container create --name terraform --account-name $(terraformstorageaccount)
+    - task: AzurePowerShell@3
+      displayName: 'Azure PowerShell script: InlineScript'
+      inputs:
+        azureSubscription: 'Visual Studio Enterprise – MPN - FCY (d6aa2fba-9eff-4f57-878b-0ab1d7768832)'
+        ScriptType: 'InlineScript'
+        Inline: |
+          $key=(Get-AzureRmStorageAccountKey -ResourceGroupName $(terraformstoragerg) -AccountName $(terraformstorageaccount)).Value[0]
+          Write-Host "##vso[task.setvariable variable=storagekey]$key"
+        azurePowerShellVersion: 'LatestVersion'
+    - task: replacetokens@3
+      inputs:
+        rootDirectory: '$(Pipeline.Workspace)'
+        targetFiles: '**/*.tf'
+        encoding: 'auto'
+        writeBOM: true
+        actionOnMissing: 'warn'
+        keepToken: false
+        tokenPrefix: '__'
+        tokenSuffix: '__'
+    - task: Terraform@2
+      displayName: Terraform init
+      inputs:
+        TemplatePath: '$(Pipeline.Workspace)/drop/Terraform'
+        Arguments: 'init'
+        InstallTerraform: true
+        UseAzureSub: true
+        ConnectedServiceNameSelector: 'ConnectedServiceNameARM'
+        ConnectedServiceNameARM: 'Visual Studio Enterprise – MPN - FCY (d6aa2fba-9eff-4f57-878b-0ab1d7768832)'
+        ManageState: false
+    - task: Terraform@2
+      displayName: Terraform plan
+      inputs:
+        TemplatePath: '$(Pipeline.Workspace)/drop/Terraform'
+        Arguments: 'plan'
+        InstallTerraform: true
+        UseAzureSub: true
+        ConnectedServiceNameSelector: 'ConnectedServiceNameARM'
+        ConnectedServiceNameARM: 'Visual Studio Enterprise – MPN - FCY (d6aa2fba-9eff-4f57-878b-0ab1d7768832)'
+        ManageState: false
+    - task: Terraform@2
+      displayName: Terraform apply
+      inputs:
+        TemplatePath: '$(Pipeline.Workspace)/drop/Terraform'
+        Arguments: 'apply -auto-approve'
+        InstallTerraform: true
+        UseAzureSub: true
+        ConnectedServiceNameSelector: 'ConnectedServiceNameARM'
+        ConnectedServiceNameARM: 'Visual Studio Enterprise – MPN - FCY (d6aa2fba-9eff-4f57-878b-0ab1d7768832)'
+        ManageState: false
